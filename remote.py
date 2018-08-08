@@ -145,6 +145,9 @@ def makeExe(options,inputfiles,outputfile,sample):
 sleep $[ ( $RANDOM % 30 ) ]
 date
 
+echo $HOSTNAME
+env
+
 cd ${_CONDOR_SCRATCH_DIR}
 tar -xvzf exe.tar.gz
 ls

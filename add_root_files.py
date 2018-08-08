@@ -67,6 +67,8 @@ def main():
     if options.clean:
         cleanUp(options)
     write_info(options)
+    log.info('Finished!')
+    
         
 def write_info(options):
     info_file=open(os.path.join(options.output,"info.txt"),"w")
@@ -159,7 +161,7 @@ def megeRootFiles(options):
         shutil.move(outputFolder+"/"+"%s.root"%(os.path.basename(dataSample)),outputFolder+"/"+"Data_%s.root"%(os.path.basename(dataSample)))
     if hasData:
         all_merged_data_files=[outputFolder+"/"+"Data_%s.root "%(os.path.basename(dataSample))  for dataSample in dataSamples]
-        command= "hadd %s "%options.hadd+outputFolder+"/"+"allData.root "+" ".join(all_merged_data_files)
+        command= "hadd -fk "+outputFolder+"/"+"allData.root "+" ".join(all_merged_data_files)
         print(command)
         if not options.dryrun:
             p = subprocess.Popen(command,shell=True, stdout = subprocess.PIPE, stderr = subprocess.STDOUT)
