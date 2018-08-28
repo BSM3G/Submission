@@ -164,12 +164,21 @@ else
     sed -r -i -e 's/(isData\s+)(1|true)/isData false/' -e 's/(CalculatePUS[a-z]+\s+)(0|false)/CalculatePUSystematics true/' \
 	$CONFIGDIR/Run_info.in
 fi
+
+for dummy in $(seq 2)
+do
 """
     if len(inputfiles)==1 and options.configdir=="PartDet":
-        exe+="./Analyzer $INPUTFILES $OUPUTFILE\n"
+        exe+="  ./Analyzer $INPUTFILES $OUPUTFILE\n"
     else:
-        exe+="./Analyzer -in $INPUTFILES -out $OUPUTFILE -C $CONFIGDIR $CONTOLLREGION\n"
+        exe+="  ./Analyzer -in $INPUTFILES -out $OUPUTFILE -C $CONFIGDIR $CONTOLLREGION\n"
     exe+="""
+    RET=$? ;
+    if [ $RET -eq 0 ]; 
+        then break;
+    fi
+    echo "Did not work will try once more"
+done
 xrdcp -sf $_CONDOR_SCRATCH_DIR/$OUPUTFILE $OUTPUTFOLDER/$SAMPLE/$OUPUTFILE
 rm run.sh
 """
