@@ -6,7 +6,7 @@ from datetime import datetime
 import optparse,os,time,pickle,subprocess,shutil,sys,getpass,re
 import logging
 import ROOT
-from condor_submit import checkAndRenewVomsProxy, getProxyInfo
+from condor_submit import checkAndRenewVomsProxy
 from collections import OrderedDict
 from commands import getoutput
 log = logging.getLogger( 'remote' )
