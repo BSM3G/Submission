@@ -6,136 +6,121 @@ from datetime import datetime
 import optparse,os,time,pickle,subprocess,shutil,sys,getpass,re
 import logging
 import ROOT
-from condor_submit import checkAndRenewVomsProxy
+from condor_submit import checkAndRenewVomsProxy, getProxyInfo
+from collections import OrderedDict
+from commands import getoutput
 log = logging.getLogger( 'remote' )
 
 
-def bins(input_file, bin_size):
+generators = OrderedDict()
+generators['madgraph'] = 'MG'
+generators['powheg'] = 'PH'
+generators['herwig6'] = 'HW'
+generators['herwigpp'] = 'HP'
+generators['herwig'] = 'HW'
+generators['sherpa'] = 'SP'
+generators['amcatnlo'] = 'AM'
+generators['alpgen'] = 'AG'
+generators['calchep'] = 'CA'
+generators['comphep'] = 'CO'
+generators['lpair'] = 'LP'
+generators['pythia6'] = 'P6'
+generators['pythia8'] = 'P8'
+generators['pythia'] = 'PY'
+generators['gg2ww'] = 'GG'
+generators['gg2zz'] = 'GG'
+generators['gg2vv'] = 'GG'
+generators['JHUGen'] = 'JG'
+generators['blackmax'] = 'BM'
+generators['unknown'] = ''
+
+# list of generators used for hadronization on top of another generator (will be removed from name)
+showers = [ 'pythia8', 'pythia6', 'pythia', 'herwigpp']
+
+# list of tags which will be removed from name (case insensitive)
+blacklist = ['13tev',
+             'madspin',
+             'FXFX',
+             'MLM',
+             'NNPDF30',
+             'TuneCUEP8M1',
+             'TuneCUETP8M1',
+             'TuneCUETP8M2T4']
+
+
+def parse_name(dataset, options):
+    # format of datasetpath: /.../.../...
+    # first part contains name + additional tags ( cme, tune, .. )
+    # second part has additional information ( campaign, extention sample? ,... )
+    # third part contains sample 'format' (AOD, MINIAOD, ...)
+    dataset_split = dataset.split('/')
+    ds_pt1 = dataset_split[1]
+    ds_pt2 = dataset_split[2]
+    ds_pt3 = "MC" if "SIM" in dataset_split[3] else "data"
+    if ds_pt3 =="data":
+        ds_pt3+="_"+ds_pt2.split("-")[0][-1]
+    for generator in generators.keys():
+        # subn() performs sub(), but returns tuple (new_string, number_of_subs_made)
+        # using (?i) at the beginning of a regular expression makes it case insensitive
+        ( ds_pt1, n ) = re.subn( r'(?i)[_-]' + generator, '', ds_pt1 )
+        if n > 0:
+            _generator = generator
+            for shower in showers:
+                ds_pt1 = re.sub( r'(?i)[_-]' + shower, '', ds_pt1 )
+            break
+        else:
+            _generator = 'unknown'
+    for item in blacklist:
+        ds_pt1 = re.sub( r'(?i)[_-]*' + item, '', ds_pt1 )
+    match = re.search('ext\d\d*',ds_pt2)
+    if match:
+        name = ds_pt1 + "_" + options.cme + "TeV_" + match.group() + "_" + options.postfix + generators[_generator]+"_"+ds_pt3
+    else:
+        name = ds_pt1 + "_" + options.cme + "TeV_" + options.postfix + generators[_generator]+"_"+ds_pt3
+    return name
+
+def bins(file_list, bin_size):
 
     binning_list = []
-    size_list = []
-    name_list = []
 
-    f = open(input_file,"r")
-    for item in f:
-        tmp_line = item.strip().split()
-        size_list.append(int(tmp_line[0]))
-        name_list.append(tmp_line[1])
-
-    binning_size = []
     maxsize=0
     current_bin=[]
-    for i, sizer in enumerate(size_list):
-        current_bin.append(name_list[i])
-        maxsize+=sizer
+    for i, file in enumerate(file_list):
+        current_bin.append(file)
+        maxsize+=file_list[file]
         # one file per bin
-        if maxsize>bin_size or (maxsize+sizer*0.5)>bin_size:
+        if maxsize>bin_size or (maxsize+file_list[file]*0.5)>bin_size:
             #print(maxsize,current_bin)
             binning_list.append(current_bin)
             current_bin=[]
             maxsize=0
-        elif i==len(size_list)-1:
+        elif i==len(file_list)-1:
             binning_list.append(current_bin)
             
     return binning_list
 
 
-def getFolder(folder,sample):
-    import glob
-    folders=glob.glob(folder)
-    # get the newest!!
-    folder=None
-    if len(folders)==1:
-        folder=folders[0]
-    else:
-        newest=None
-        log.info("Sample %s is not unique, will use"%sample)
-        folder=None
-        for ifold in folders:
-            if newest == None:
-                newest = os.path.getmtime(ifold)
-                folder=ifold
-            elif os.path.getmtime(ifold)> newest:
-                newest = os.path.getmtime(ifold)
-                folder=ifold
-        for f in folders:
-            print f.split("/")[-1]
-            if f.split("/")[-1]==sample:
-                print f
-                folder=f
-        log.info(folder)
-    return folder
-    
+def getDatasetFileList(sample):
+ command = 'dasgoclient --query="file dataset=%s | grep file.name, file.size"' % (sample)
+ output = getoutput(command)
+ fileList = {}
+ for line in output.split(os.linesep):
+     file,size=line.split()
+     fileList['root://cms-xrd-global.cern.ch/'+file]=int(size)
+ return fileList
 
-def create_sample_list(sample):
-    log.info("Will get the file list for %s"%sample)
-    
-    locations=[
-    "/eos/uscms/store/user/ra2tau/July72017/*/%s"%(sample),
-    "/eos/uscms/store/user/ra2tau/July72017/*/*%s*"%(sample),
-    "/eos/uscms/store/user/ra2tau/jan2017tuple/*/*%s*"%(sample),
-    "/eos/uscms/store/user/ra2tau/jan2017tuple/*/%s"%(sample),
-    "/eos/uscms//store/user/jruizalv/*%s*"%(sample),
-    ]
-    for l in locations:
-        folder=getFolder(l,sample)
-        if folder is not None and folder!="":
-            break
-    if folder is None:
-        log.info("Sample %s was not found"%sample)
-    log.info("Found sample %s, will test for files. This may take a while (only the first time)."%sample)
-    
-    sampleFile = open("list_Samples/" + sample + ".txt","w")
-    rfile=ROOT.TFile()
-    for root, dirs, files in os.walk(folder):
-        if len(files)>0:
-            testcommand="./test_root %s/*.root"%root
-            
-            #p = subprocess.Popen(testcommand, shell=True, stdout=subprocess.PIPE,
-                           #stderr=subprocess.PIPE,
-                           #stdin=subprocess.PIPE)
-            #out, err = p.communicate()
-            #output=err
-            try:
-                output=subprocess.check_output(testcommand,shell=True,stderr=subprocess.STDOUT)
-            except:
-                output=""
-            for f in files:
-                if ".root" in f and not "failed" in root:
-                    filepath=os.path.join(root, f).replace("/eos/uscms","root://cmseos.fnal.gov//")
-                    if filepath.split("//")[-1] in output:
-                        log.info("Bad file: %s"%filepath)
-                        continue
-                    
-                    sampleFile.write("%d     %s\n"%(os.path.getsize(os.path.join(root, f)), filepath ))
-    sampleFile.close()
 
 def getFilesfromFile(cfgFile, options):
     sampleList={}
     file = open(cfgFile,'r')
-    if(not os.path.exists("list_Samples")):
-        os.makedirs("list_Samples")
     
     for line in file:
         if line[0]=="#" or len(line.split())==0:
             continue
         sample=line.strip()
-        if not options.filesFromACCRE:
-            sample=re.sub('-amcatnloFXFX-pythia8$', '', sample)
-            sample=re.sub('-madgraphMLM-pythia8$', '', sample)
-            sample=re.sub('-powheg_pythia8$', '', sample)
-            sample=re.sub('-pythia8$', '', sample)
-            if not os.path.exists("list_Samples/"+sample+".txt"):
-                create_sample_list(sample)
-            file_lists=bins("list_Samples/"+sample+".txt",8000000000)#size in bytes 3GB
-        else:
-            file_lists=bins("listSampleACCRE/"+sample+".txt",8000000000)#size in bytes 3GB
-        if len(file_lists)>0:
-            cleaned_list=[]
-            for binedList in file_lists:
-                binedList=[x for x in binedList if "failed" not in x]
-                cleaned_list.append(binedList)
-            sampleList[sample]=cleaned_list
+        
+        file_lists=bins(getDatasetFileList(sample),3000000000)#size in bytes 3GB
+        sampleList[parse_name(sample,options)]=file_lists
     return sampleList
 
 def makeExe(options,inputfiles,outputfile,sample):
