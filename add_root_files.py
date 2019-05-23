@@ -52,6 +52,8 @@ def main():
             if "outFolder:" in line:
                 options.inputFolder=line.replace("outFolder:","").strip()
                 break
+    
+    options.output=os.path.join(options.inputFolder,options.output)
     print options.output
     megeRootFiles(options)
     
@@ -113,6 +115,8 @@ def megeRootFiles(options):
         if options.veto is not None:
             if options.veto in sample:
                 continue
+        if "output" in sample:
+            continue
         samplelist=glob.glob(sample+"/*.root")
         for s in range(len(samplelist)):
             samplelist[s]=samplelist[s].replace("/eos/uscms//","root://cmseos.fnal.gov//")
